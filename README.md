@@ -1,20 +1,52 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# OmniLearn - 探索万物，图解一切
 
-# Run and deploy your AI Studio app
+一个交互式在线学习平台，带你探索计算机科学的奥秘。
 
-This contains everything you need to run your app locally.
+## 特性
 
-View your app in AI Studio: https://ai.studio/apps/44e71a46-daa7-433f-ac9b-76a9771cb2da
+- 🎓 交互式课程 - 从零开始学 Python
+- 💻 代码练习场 - 边学边练
+- 🎨 玻璃拟态 UI - 现代暗色主题
+- 📊 学习进度跟踪
 
-## Run Locally
+## 快速开始
 
-**Prerequisites:**  Node.js
+### 安装依赖
 
+```bash
+npm install
+```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+### 启动开发服务器
+
+```bash
+# 启动前端
+npm run dev
+
+# 启动后端 (另一个终端)
+cd server
+npx tsx src/index.ts
+```
+
+### 访问
+
+- 前端: http://localhost:5174
+- 后端: http://localhost:3001
+
+### 登录
+
+- 邮箱: demo@omnilearn.app
+- 密码: password123
+
+## 技术栈
+
+- React + TypeScript
+- Vite
+- SQLite
+- Express
+- Tailwind CSS
+- Motion (动画)
+
+## License
+
+MIT
