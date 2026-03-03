@@ -1,4 +1,4 @@
-const API_BASE = 'http://localhost:3007/api';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
 
 interface ApiResponse<T> {
   data?: T;
@@ -63,6 +63,7 @@ export const lessonsApi = {
   getByCourse: (courseId: number) =>
     request<{ lessons: any[] }>(`/lessons/course/${courseId}`),
   getById: (id: number) => request<{ lesson: any }>(`/lessons/${id}`),
+  getVersions: (id: number) => request<{ versions: any[] }>(`/lessons/${id}/versions`),
   create: (data: {
     courseId: number;
     title: string;
@@ -72,6 +73,34 @@ export const lessonsApi = {
     orderIndex?: number;
   }) =>
     request<{ lesson: any }>('/lessons', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  update: (id: number, data: {
+    title?: string;
+    description?: string;
+    lessonType?: string;
+    content?: any;
+    orderIndex?: number;
+    changeNote?: string;
+  }) =>
+    request<{ lesson: any; version: number }>(`/lessons/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  publishRuntime: (data: {
+    courseTitle?: string;
+    courseDescription?: string;
+    category?: string;
+    lessonTitle?: string;
+    lessonDescription?: string;
+    schema: any;
+    lessonId?: number;
+    courseId?: number;
+    changeNote?: string;
+    creatorId?: number;
+  }) =>
+    request<{ lesson: any; courseId: number; version: number; mode: 'create' | 'republish' }>('/lessons/runtime/publish', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
@@ -101,6 +130,16 @@ export const aiApi = {
     request<{ lesson: any; provider: string }>('/ai/generate-lesson', {
       method: 'POST',
       body: JSON.stringify({ lessonTitle, topic, type }),
+    }),
+  generateRuntimeSchema: (topic: string, visualStyle?: string, complexity?: 'low' | 'medium' | 'high') =>
+    request<{ schema: any; provider: string }>('/ai/generate-runtime-schema', {
+      method: 'POST',
+      body: JSON.stringify({ topic, visualStyle, complexity }),
+    }),
+  refineRuntimeSchema: (currentSchema: any, instruction: string, visualStyle?: string) =>
+    request<{ schema: any; provider: string }>('/ai/refine-runtime-schema', {
+      method: 'POST',
+      body: JSON.stringify({ currentSchema, instruction, visualStyle }),
     }),
   getConfig: () =>
     request<{ provider: string; configured: boolean; availableProviders: string[] }>('/ai/config'),

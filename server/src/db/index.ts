@@ -100,6 +100,21 @@ export async function initDb() {
     )
   `);
 
+  db.run(`
+    -- Lesson content versions
+    CREATE TABLE IF NOT EXISTS lesson_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      lesson_id INTEGER NOT NULL,
+      version INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      change_note TEXT DEFAULT '',
+      created_by INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (lesson_id) REFERENCES lessons(id),
+      UNIQUE(lesson_id, version)
+    )
+  `);
+
   saveDb();
   console.log('✅ Database initialized');
   return db;
@@ -235,6 +250,57 @@ export function createLesson(courseId: number, title: string, description: strin
   const result = db.exec('SELECT last_insert_rowid() as id');
   saveDb();
   return result[0]?.values[0]?.[0];
+}
+
+export function updateLesson(id: number, title: string, description: string, lessonType: string, content: string, orderIndex: number) {
+  db.run(
+    `
+      UPDATE lessons
+      SET title = ?, description = ?, lesson_type = ?, content = ?, order_index = ?
+      WHERE id = ?
+    `,
+    [title, description, lessonType, content, orderIndex, id]
+  );
+  saveDb();
+}
+
+export function createLessonVersion(lessonId: number, content: string, changeNote: string = '', createdBy: number = 1) {
+  const versionStmt = db.prepare('SELECT COALESCE(MAX(version), 0) + 1 as next_version FROM lesson_versions WHERE lesson_id = ?');
+  versionStmt.bind([lessonId]);
+  let nextVersion = 1;
+  if (versionStmt.step()) {
+    const row = versionStmt.getAsObject() as { next_version?: number };
+    nextVersion = Number(row.next_version || 1);
+  }
+  versionStmt.free();
+
+  db.run(
+    'INSERT INTO lesson_versions (lesson_id, version, content, change_note, created_by) VALUES (?, ?, ?, ?, ?)',
+    [lessonId, nextVersion, content, changeNote, createdBy]
+  );
+  saveDb();
+  return nextVersion;
+}
+
+export function getLessonVersions(lessonId: number) {
+  const rows = db.exec(`
+    SELECT id, lesson_id, version, content, change_note, created_by, created_at
+    FROM lesson_versions
+    WHERE lesson_id = ${lessonId}
+    ORDER BY version DESC
+  `);
+
+  if (!rows.length) return [];
+
+  return rows[0].values.map(row => ({
+    id: row[0],
+    lesson_id: row[1],
+    version: row[2],
+    content: row[3],
+    change_note: row[4],
+    created_by: row[5],
+    created_at: row[6]
+  }));
 }
 
 export function getUserProgress(userId: number, lessonId: number) {

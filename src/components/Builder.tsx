@@ -4,11 +4,13 @@ import {
   ChevronLeft, Type, Image as ImageIcon, MousePointer2, 
   Lightbulb, Network, Layout, PlusCircle, Settings, 
   Save, Play, Trash2, Eye, Video, Code, ChevronDown, ChevronUp,
-  Bold, Italic, AlignLeft, AlignCenter, AlignRight, Link,
-  Clock, ArrowUp, ArrowDown, Copy, Download
+  Bold, Italic, AlignLeft, AlignCenter, AlignRight,
+  Clock, Copy, Download, Rocket, Upload
 } from 'lucide-react';
-import { draftsApi } from '../lib/api';
+import { aiApi, draftsApi, lessonsApi } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
+import { convertBuilderToRuntimeSchema, convertRuntimeSchemaToBuilderDraft, diffRuntimeSchemas, type RuntimeSchemaDiffSummary } from '../lib/runtimeBuilder';
+import type { LessonSchemaV1 } from '../types/lesson-schema';
 
 type ComponentType = 'text' | 'image' | 'video' | 'code' | 'hotspot' | 'switch' | 'flow' | 'quiz' | 'accordion' | 'divider';
 
@@ -27,6 +29,15 @@ interface Step {
   id: string;
   name: string;
   duration: number;
+}
+
+interface RuntimeVersion {
+  id: number;
+  lesson_id: number;
+  version: number;
+  content: any;
+  change_note: string;
+  created_at: string;
 }
 
 const componentTypes: { type: ComponentType; icon: React.ElementType; label: string; color: string }[] = [
@@ -61,6 +72,18 @@ function BuilderView({ onBack, draftId }: { onBack: () => void; draftId?: number
   const canvasRef = useRef<HTMLDivElement>(null);
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [runtimeLessonId, setRuntimeLessonId] = useState<number | null>(null);
+  const [runtimeVersions, setRuntimeVersions] = useState<RuntimeVersion[]>([]);
+  const [runtimeLoading, setRuntimeLoading] = useState(false);
+  const [runtimeChangeNote, setRuntimeChangeNote] = useState('');
+  const [aiTopic, setAiTopic] = useState('CPU 指令流水线');
+  const [aiVisualStyle, setAiVisualStyle] = useState('tech');
+  const [aiComplexity, setAiComplexity] = useState<'low' | 'medium' | 'high'>('medium');
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiRefinePrompt, setAiRefinePrompt] = useState('把节奏加快，并强化关键节点高亮');
+  const [aiRefining, setAiRefining] = useState(false);
+  const [runtimeDiffSummary, setRuntimeDiffSummary] = useState<RuntimeSchemaDiffSummary | null>(null);
+  const runtimeImportInputRef = useRef<HTMLInputElement>(null);
 
   const selectedComponent = components.find(c => c.id === selectedId);
 
@@ -242,6 +265,280 @@ function BuilderView({ onBack, draftId }: { onBack: () => void; draftId?: number
     }
     await handleSave();
     alert('课程已发布！可以到课程列表中查看。');
+  };
+
+  const handleExportRuntimeJson = () => {
+    try {
+      const schema = convertBuilderToRuntimeSchema({
+        courseTitle,
+        components,
+        steps,
+      });
+      const data = JSON.stringify(schema, null, 2);
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${courseTitle.replace(/\s+/g, '_') || 'runtime_lesson'}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Export runtime JSON failed:', error);
+      alert('导出失败，请检查组件配置。');
+    }
+  };
+
+  const fetchRuntimeVersions = async (lessonId: number) => {
+    const result = await lessonsApi.getVersions(lessonId);
+    if (result.error) {
+      alert(`获取版本失败: ${result.error}`);
+      return [];
+    }
+    const versions = (result.data?.versions || []) as RuntimeVersion[];
+    setRuntimeVersions(versions);
+    setRuntimeDiffSummary(null);
+    return versions;
+  };
+
+  const asRuntimeSchema = (schemaInput: any): LessonSchemaV1 | null => {
+    try {
+      const schema = typeof schemaInput === 'string' ? JSON.parse(schemaInput) : schemaInput;
+      if (!schema || schema.schemaVersion !== '1.0' || !Array.isArray(schema.nodes)) {
+        return null;
+      }
+      return schema as LessonSchemaV1;
+    } catch {
+      return null;
+    }
+  };
+
+  const applyRuntimeSchemaToCanvas = (schemaInput: any) => {
+    try {
+      const schema = asRuntimeSchema(schemaInput);
+      if (!schema) {
+        alert('该版本不是可编辑的 Runtime Schema v1');
+        return;
+      }
+
+      const restored = convertRuntimeSchemaToBuilderDraft(schema);
+      setCourseTitle(restored.courseTitle || courseTitle);
+      setComponents(restored.components || []);
+      setSteps(restored.steps?.length ? restored.steps : steps);
+      setCurrentStep(0);
+      setSelectedId(null);
+      alert('已将该版本内容恢复到画布，可继续编辑。');
+    } catch (error) {
+      console.error('Apply runtime schema failed:', error);
+      alert('应用版本失败：内容格式异常。');
+    }
+  };
+
+  const handleGenerateRuntimeByAi = async () => {
+    if (!aiTopic.trim()) {
+      alert('请输入想生成的主题');
+      return;
+    }
+
+    setAiGenerating(true);
+    try {
+      const result = await aiApi.generateRuntimeSchema(aiTopic.trim(), aiVisualStyle, aiComplexity);
+      if (result.error) {
+        alert(`AI 生成失败: ${result.error}`);
+        return;
+      }
+
+      const schema = result.data?.schema;
+      if (!schema) {
+        alert('AI 未返回可用课件结构');
+        return;
+      }
+
+      applyRuntimeSchemaToCanvas(schema);
+      setCourseTitle(schema.title || aiTopic.trim());
+      setRuntimeLessonId(null);
+      setRuntimeVersions([]);
+      setRuntimeDiffSummary(null);
+      setRuntimeChangeNote(`ai generated: ${aiTopic.trim()} (${result.data?.provider || 'unknown'})`);
+    } catch (error) {
+      console.error('Generate runtime by AI failed:', error);
+      alert('AI 生成失败，请稍后重试。');
+    } finally {
+      setAiGenerating(false);
+    }
+  };
+
+  const handleRefineRuntimeByAi = async () => {
+    if (!aiRefinePrompt.trim()) {
+      alert('请输入修改指令');
+      return;
+    }
+
+    if (components.length === 0) {
+      alert('当前画布为空，请先生成或添加组件。');
+      return;
+    }
+
+    setAiRefining(true);
+    try {
+      const currentSchema = convertBuilderToRuntimeSchema({
+        courseTitle,
+        components,
+        steps,
+      });
+
+      const result = await aiApi.refineRuntimeSchema(currentSchema, aiRefinePrompt.trim(), aiVisualStyle);
+      if (result.error) {
+        alert(`AI 修改失败: ${result.error}`);
+        return;
+      }
+
+      const schema = result.data?.schema;
+      if (!schema) {
+        alert('AI 未返回可用课件结构');
+        return;
+      }
+
+      applyRuntimeSchemaToCanvas(schema);
+      setCourseTitle(schema.title || courseTitle);
+      setRuntimeDiffSummary(null);
+      setRuntimeChangeNote(`ai refine: ${aiRefinePrompt.trim()} (${result.data?.provider || 'unknown'})`);
+    } catch (error) {
+      console.error('Refine runtime by AI failed:', error);
+      alert('AI 修改失败，请稍后重试。');
+    } finally {
+      setAiRefining(false);
+    }
+  };
+
+  const handleImportRuntimeJsonClick = () => {
+    runtimeImportInputRef.current?.click();
+  };
+
+  const handleImportRuntimeJsonFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const schema = asRuntimeSchema(text);
+      if (!schema) {
+        alert('导入失败：文件不是有效的 Runtime Schema v1');
+        return;
+      }
+
+      applyRuntimeSchemaToCanvas(schema);
+      setRuntimeLessonId(null);
+      setRuntimeVersions([]);
+      setRuntimeDiffSummary(null);
+      setRuntimeChangeNote(`import from ${file.name}`);
+    } catch (error) {
+      console.error('Import runtime JSON failed:', error);
+      alert('导入失败：文件读取异常。');
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const handlePublishRuntime = async () => {
+    if (components.length === 0) {
+      alert('请先添加至少一个组件');
+      return;
+    }
+
+    try {
+      const schema = convertBuilderToRuntimeSchema({
+        courseTitle,
+        components,
+        steps,
+      });
+
+      const result = await lessonsApi.publishRuntime({
+        courseTitle: runtimeLessonId ? undefined : courseTitle,
+        courseDescription: runtimeLessonId ? undefined : `${courseTitle} - 由 Builder 自动生成`,
+        category: runtimeLessonId ? undefined : 'runtime',
+        lessonTitle: `${courseTitle} · Runtime 课时`,
+        lessonDescription: `Data-driven runtime lesson exported from Builder at ${new Date().toISOString()}`,
+        schema,
+        lessonId: runtimeLessonId || undefined,
+        changeNote: runtimeChangeNote || (runtimeLessonId ? 'builder runtime update' : 'builder runtime initial publish'),
+        creatorId: user?.id || 1,
+      });
+
+      if (result.error) {
+        alert(`发布失败: ${result.error}`);
+        return;
+      }
+
+      const lessonId = result.data?.lesson?.id ? Number(result.data.lesson.id) : null;
+      if (lessonId) {
+        setRuntimeLessonId(lessonId);
+        await fetchRuntimeVersions(lessonId);
+      }
+
+      setRuntimeChangeNote('');
+      await handleSave();
+      alert(runtimeLessonId ? 'Runtime 课件已更新并生成新版本。' : 'Runtime 课件发布成功！可在学习大厅中查看。');
+    } catch (error) {
+      console.error('Publish runtime failed:', error);
+      alert('Runtime 发布失败，请检查组件配置后重试。');
+    }
+  };
+
+  const handleRefreshRuntimeVersions = async () => {
+    if (!runtimeLessonId) {
+      alert('请先发布 Runtime 课件。');
+      return;
+    }
+    setRuntimeLoading(true);
+    try {
+      await fetchRuntimeVersions(runtimeLessonId);
+    } finally {
+      setRuntimeLoading(false);
+    }
+  };
+
+  const handleRollbackRuntimeVersion = async (version: RuntimeVersion) => {
+    if (!runtimeLessonId) return;
+
+    const confirmed = window.confirm(`确认回滚到版本 v${version.version}？`);
+    if (!confirmed) return;
+
+    const updateResult = await lessonsApi.update(runtimeLessonId, {
+      lessonType: 'runtime',
+      content: version.content,
+      changeNote: `rollback to v${version.version}`,
+    });
+
+    if (updateResult.error) {
+      alert(`回滚失败: ${updateResult.error}`);
+      return;
+    }
+
+    await fetchRuntimeVersions(runtimeLessonId);
+    alert(`已回滚到 v${version.version}`);
+  };
+
+  const handleApplyRuntimeVersionToCanvas = (version: RuntimeVersion) => {
+    applyRuntimeSchemaToCanvas(version.content);
+  };
+
+  const handleCompareRuntimeVersionWithPrevious = (version: RuntimeVersion) => {
+    const previous = runtimeVersions.find((item) => item.version === version.version - 1);
+    if (!previous) {
+      alert(`v${version.version} 没有可对比的上一版`);
+      return;
+    }
+
+    const fromSchema = asRuntimeSchema(previous.content);
+    const toSchema = asRuntimeSchema(version.content);
+
+    if (!fromSchema || !toSchema) {
+      alert('版本内容不是标准 Runtime Schema，无法对比');
+      return;
+    }
+
+    const summary = diffRuntimeSchemas(fromSchema, toSchema, previous.version, version.version);
+    setRuntimeDiffSummary(summary);
   };
 
   const addStep = () => {
@@ -463,7 +760,71 @@ function BuilderView({ onBack, draftId }: { onBack: () => void; draftId?: number
 
         {/* Quick Actions */}
         <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-4">
+          <input
+            ref={runtimeImportInputRef}
+            type="file"
+            accept=".json,application/json"
+            onChange={handleImportRuntimeJsonFile}
+            className="hidden"
+          />
           <h4 className="text-xs font-bold text-slate-500 uppercase mb-3">操作</h4>
+          <div className="mb-3 p-2 rounded border border-cyan-500/20 bg-cyan-500/5 space-y-2">
+            <input
+              value={aiTopic}
+              onChange={(e) => setAiTopic(e.target.value)}
+              placeholder="AI 主题，例如：TCP 拥塞控制"
+              className="w-full bg-black/30 border border-white/10 rounded px-2 py-2 text-white text-xs"
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <select
+                value={aiVisualStyle}
+                onChange={(e) => setAiVisualStyle(e.target.value)}
+                className="bg-black/30 border border-white/10 rounded px-2 py-2 text-white text-xs"
+              >
+                <option value="tech">科技感</option>
+                <option value="minimal">极简</option>
+                <option value="education">教学板书</option>
+                <option value="dashboard">数据看板</option>
+              </select>
+              <select
+                value={aiComplexity}
+                onChange={(e) => setAiComplexity((e.target.value as 'low' | 'medium' | 'high'))}
+                className="bg-black/30 border border-white/10 rounded px-2 py-2 text-white text-xs"
+              >
+                <option value="low">低复杂度</option>
+                <option value="medium">中复杂度</option>
+                <option value="high">高复杂度</option>
+              </select>
+            </div>
+            <button
+              onClick={handleGenerateRuntimeByAi}
+              disabled={aiGenerating}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-lg text-sm"
+            >
+              {aiGenerating ? 'AI 生成中...' : 'AI 生成动态课件'}
+            </button>
+            <textarea
+              value={aiRefinePrompt}
+              onChange={(e) => setAiRefinePrompt(e.target.value)}
+              placeholder="AI 修改指令，例如：让动画更快、增加关键步骤提示"
+              className="w-full bg-black/30 border border-white/10 rounded px-2 py-2 text-white text-xs min-h-[56px]"
+            />
+            <button
+              onClick={handleRefineRuntimeByAi}
+              disabled={aiRefining}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-emerald-600/80 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm"
+            >
+              {aiRefining ? 'AI 修改中...' : 'AI 修改当前画布'}
+            </button>
+          </div>
+          <div className="mb-2">
+            <textarea
+              value={runtimeChangeNote}
+              onChange={(e) => setRuntimeChangeNote(e.target.value)}
+              placeholder="Runtime 版本说明（可选）"
+              className="w-full bg-black/30 border border-white/10 rounded px-2 py-2 text-white text-xs min-h-[56px]"
+            />
+          </div>
           <div className="space-y-2">
             <button onClick={handleSave} className="w-full flex items-center gap-2 px-3 py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 rounded-lg text-sm">
               <Save size={16} /> 保存草稿
@@ -474,6 +835,78 @@ function BuilderView({ onBack, draftId }: { onBack: () => void; draftId?: number
             <button onClick={handlePublish} className="w-full flex items-center gap-2 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm">
               <Play size={16} /> 发布课程
             </button>
+            <button onClick={handlePublishRuntime} className="w-full flex items-center gap-2 px-3 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm">
+              <Rocket size={16} /> 发布 Runtime 课件
+            </button>
+            <button onClick={handleExportRuntimeJson} className="w-full flex items-center gap-2 px-3 py-2 bg-slate-600/30 hover:bg-slate-600/50 text-slate-100 rounded-lg text-sm">
+              <Download size={16} /> 导出 Runtime JSON
+            </button>
+            <button onClick={handleImportRuntimeJsonClick} className="w-full flex items-center gap-2 px-3 py-2 bg-indigo-600/40 hover:bg-indigo-600/60 text-indigo-100 rounded-lg text-sm">
+              <Upload size={16} /> 导入 Runtime JSON
+            </button>
+            <button
+              onClick={handleRefreshRuntimeVersions}
+              disabled={!runtimeLessonId || runtimeLoading}
+              className="w-full flex items-center gap-2 px-3 py-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 text-white rounded-lg text-sm"
+            >
+              <Clock size={16} /> {runtimeLoading ? '加载中...' : '刷新 Runtime 版本'}
+            </button>
+          </div>
+          <div className="mt-3 pt-3 border-t border-white/10">
+            <p className="text-[11px] text-slate-400 mb-2">
+              Runtime 课时 ID: {runtimeLessonId || '未发布'}
+            </p>
+            {runtimeVersions.length === 0 ? (
+              <p className="text-[11px] text-slate-500">暂无版本记录</p>
+            ) : (
+              <div className="max-h-36 overflow-y-auto space-y-1">
+                {runtimeVersions.slice(0, 8).map((version) => (
+                  <div key={version.id} className="text-[11px] bg-black/20 border border-white/10 rounded px-2 py-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-300">v{version.version}</span>
+                      <span className="text-slate-500">{String(version.created_at || '').slice(0, 16).replace('T', ' ')}</span>
+                    </div>
+                    <p className="text-slate-400 truncate mt-0.5">{version.change_note || 'no note'}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <button
+                        onClick={() => handleApplyRuntimeVersionToCanvas(version)}
+                        className="text-blue-300 hover:text-blue-200"
+                      >
+                        应用到画布
+                      </button>
+                      <button
+                        onClick={() => handleCompareRuntimeVersionWithPrevious(version)}
+                        className="text-violet-300 hover:text-violet-200"
+                      >
+                        对比上一版
+                      </button>
+                      <button
+                        onClick={() => handleRollbackRuntimeVersion(version)}
+                        className="text-cyan-300 hover:text-cyan-200"
+                      >
+                        回滚线上
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {runtimeDiffSummary && (
+              <div className="mt-2 p-2 text-[11px] rounded border border-violet-400/30 bg-violet-500/10">
+                <p className="text-violet-200 mb-1">
+                  版本对比 v{runtimeDiffSummary.fromVersion}{' -> '}v{runtimeDiffSummary.toVersion}
+                </p>
+                <p className="text-slate-300">
+                  节点 +{runtimeDiffSummary.nodeAdded} / -{runtimeDiffSummary.nodeRemoved} / ~{runtimeDiffSummary.nodeChanged}
+                </p>
+                <p className="text-slate-300">
+                  变量 +{runtimeDiffSummary.variableAdded} / -{runtimeDiffSummary.variableRemoved} / ~{runtimeDiffSummary.variableChanged}
+                </p>
+                <p className="text-slate-300">
+                  时间轴变更: {runtimeDiffSummary.timelineChanged ? '是' : '否'}
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </div>

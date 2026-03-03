@@ -24,7 +24,6 @@ function PreviewView() {
   const [quizAnswers, setQuizAnswers] = useState<Record<string, number>>({});
   const [quizSubmitted, setQuizSubmitted] = useState<Record<string, boolean>>({});
   const [quizScore, setQuizScore] = useState(0);
-  const [accordionStates, setAccordionStates] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     const storedComponents = sessionStorage.getItem('previewComponents');
@@ -195,18 +194,6 @@ function PreviewView() {
                 {comp.props.explanation}
               </div>
             )}
-          </div>
-        );
-        return (
-          <div style={{ ...baseStyle, background: 'rgba(16,185,129,0.2)', flexDirection: 'column', padding: '8px' }}>
-            <span className="text-emerald-300 text-xs mb-2">{comp.props.question}</span>
-            <div className="flex gap-1 flex-wrap">
-              {(comp.props.options || []).map((opt: string, idx: number) => (
-                <span key={`${comp.id}-opt-${idx}`} className="px-2 py-0.5 bg-emerald-500/30 rounded text-xs text-emerald-200">
-                  {opt}
-                </span>
-              ))}
-            </div>
           </div>
         );
       case 'video':

@@ -12,10 +12,13 @@ import { useAuth } from './context/AuthContext';
 import { coursesApi, aiApi, progressApi, lessonsApi } from './lib/api';
 import BuilderView from './components/Builder';
 import CourseDetailView from './components/CourseDetailView';
+import LessonRuntime from './components/LessonRuntime';
+import { binaryRuntimeLesson } from './content/lessons/binary-runtime-lesson';
+import type { LessonSchemaV1 } from './types/lesson-schema';
 
-type ViewState = 'login' | 'register' | 'dashboard' | 'lesson-cpu' | 'lesson-binary' | 'builder' | 'course-detail' | 'my-courses' | 'lesson';
+type ViewState = 'login' | 'register' | 'dashboard' | 'lesson-cpu' | 'lesson-binary' | 'lesson-runtime' | 'builder' | 'course-detail' | 'my-courses' | 'lesson';
 
-const GlassPanel = ({ children, className = "", onClick }: { children: React.ReactNode, className?: string, onClick?: () => void }) => (
+const GlassPanel = ({ children, className = "", onClick }: { children: React.ReactNode, className?: string, onClick?: () => void, key?: React.Key }) => (
   <div 
     onClick={onClick}
     className={`bg-white/5 backdrop-blur-xl border border-white/10 shadow-[0_8px_32px_0_rgba(0,0,0,0.3)] rounded-2xl ${className}`}
@@ -111,7 +114,7 @@ function LoginView({ onSwitchToRegister }: { onSwitchToRegister: () => void }) {
 
 interface Course { id: number; title: string; description: string; category: string; creator_name: string; lesson_count: number; is_ai_generated: number; }
 
-function DashboardView({ onNavigate }: { onNavigate: (view: ViewState, courseId?: number) => void }) {
+function DashboardView({ onNavigate }: { onNavigate: (view: ViewState, courseId?: number, lessonId?: number) => void }) {
   const { user, logout } = useAuth();
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
@@ -289,6 +292,16 @@ function DashboardView({ onNavigate }: { onNavigate: (view: ViewState, courseId?
               <h4 className="text-lg font-bold text-white mb-2">万物皆数：二进制</h4>
               <p className="text-sm text-slate-400 flex-1">亲手点亮灯泡，理解计算机底层的 0 和 1 是如何组合出整个世界的。</p>
             </GlassPanel>
+            <GlassPanel onClick={() => onNavigate('lesson-runtime')} className="p-6 cursor-pointer group hover:border-cyan-500/30 transition-all flex flex-col">
+              <div className="w-12 h-12 rounded-xl bg-cyan-500/20 text-cyan-400 flex items-center justify-center mb-4 border border-cyan-500/20">
+                <Network size={24} />
+              </div>
+              <div className="inline-flex items-center gap-1 text-xs font-bold text-cyan-400 mb-2 uppercase tracking-wider">
+                <Sparkles size={12} /> Runtime Engine
+              </div>
+              <h4 className="text-lg font-bold text-white mb-2">数据驱动课件（JSON）</h4>
+              <p className="text-sm text-slate-400 flex-1">由 Lesson Schema 渲染，不依赖手写页面逻辑。用于验证“引擎化”路线。</p>
+            </GlassPanel>
           </div>
         )}
       </div>
@@ -443,7 +456,7 @@ function BinaryLessonView({ onBack }: { onBack: () => void }) {
   );
 }
 
-function MyCoursesView({ onBack, onNavigate }: { onBack: () => void; onNavigate: (view: ViewState, courseId?: number) => void }) {
+function MyCoursesView({ onBack, onNavigate }: { onBack: () => void; onNavigate: (view: ViewState, courseId?: number, lessonId?: number) => void }) {
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
   const [progress, setProgress] = useState<Record<number, { completed: number; total: number }>>({});
@@ -516,6 +529,7 @@ function MyCoursesView({ onBack, onNavigate }: { onBack: () => void; onNavigate:
 // Python Interactive Lesson View
 function PythonLessonView({ lessonId, onBack }: { lessonId: number; onBack: () => void }) {
   const [lesson, setLesson] = useState<any>(null);
+  const [runtimeSchema, setRuntimeSchema] = useState<LessonSchemaV1 | null>(null);
   const [code, setCode] = useState('');
   const [output, setOutput] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -527,7 +541,16 @@ function PythonLessonView({ lessonId, onBack }: { lessonId: number; onBack: () =
     const { data } = await lessonsApi.getById(lessonId);
     if (data?.lesson) {
       setLesson(data.lesson);
-      const content = JSON.parse(data.lesson.content || '{}');
+      const content = typeof data.lesson.content === 'string'
+        ? JSON.parse(data.lesson.content || '{}')
+        : data.lesson.content || {};
+
+      if (content.schemaVersion === '1.0' && Array.isArray(content.nodes)) {
+        setRuntimeSchema(content as LessonSchemaV1);
+      } else {
+        setRuntimeSchema(null);
+      }
+
       if (content.blocks) {
         const codeBlock = content.blocks.find((b: any) => b.type === 'code');
         if (codeBlock) setCode(codeBlock.content || '');
@@ -563,6 +586,10 @@ function PythonLessonView({ lessonId, onBack }: { lessonId: number; onBack: () =
       <Loader2 className="animate-spin text-blue-400" size={48} />
     </div>
   );
+
+  if (runtimeSchema) {
+    return <LessonRuntime lesson={runtimeSchema} onBack={onBack} />;
+  }
 
   const content = lesson ? JSON.parse(lesson.content || '{}') : {};
   const blocks = content.blocks || [];
@@ -626,18 +653,14 @@ export default function App() {
   const { user, loading } = useAuth();
   const [currentView, setCurrentView] = useState<ViewState>('login');
   const [selectedCourseId, setSelectedCourseId] = useState<number>(0);
+  const [selectedLessonId, setSelectedLessonId] = useState<number>(0);
 
 
   useEffect(() => { if (!loading && user) setCurrentView('dashboard'); }, [user, loading]);
 
   const handleNavigate = (view: ViewState, courseId?: number, lessonId?: number) => {
-    if (courseId) setSelectedCourseId(courseId);
-    if (lessonId) setSelectedLessonId(lessonId);
-    setCurrentView(view);
-    if (courseId) setSelectedCourseId(courseId);
-    if (lessonId) setSelectedLessonId(lessonId);
-    setCurrentView(view);
-    if (courseId) setSelectedCourseId(courseId);
+    if (courseId !== undefined) setSelectedCourseId(courseId);
+    if (lessonId !== undefined) setSelectedLessonId(lessonId);
     setCurrentView(view);
   };
 
@@ -647,14 +670,15 @@ export default function App() {
     <div className="min-h-screen bg-slate-950 font-sans selection:bg-blue-500/30 text-slate-200">
       <AnimatedBackground />
       <AnimatePresence mode="wait">
-        {!user && currentView === 'login' && <LoginView key="login" onSwitchToRegister={() => setCurrentView('register')} />}
-        {user && currentView === 'dashboard' && <DashboardView key="dash" onNavigate={handleNavigate} />}
-        {user && currentView === 'my-courses' && <MyCoursesView key="my-courses" onBack={() => setCurrentView('dashboard')} onNavigate={handleNavigate} />}
-        {user && currentView === 'lesson-cpu' && <CpuLessonView key="cpu" onBack={() => setCurrentView('dashboard')} />}
-        {user && currentView === 'lesson-binary' && <BinaryLessonView key="binary" onBack={() => setCurrentView('dashboard')} />}
-        {user && currentView === 'builder' && <BuilderView key="builder" onBack={() => setCurrentView('dashboard')} />}
-        {user && currentView === 'course-detail' && <CourseDetailView key="course-detail" courseId={selectedCourseId} onBack={() => setCurrentView('dashboard')} onNavigate={handleNavigate} />}
-        {user && currentView === 'lesson' && selectedLessonId > 0 && <PythonLessonView key="lesson" lessonId={selectedLessonId} onBack={() => setCurrentView('course-detail')} />}
+        {!user && currentView === 'login' && <LoginView onSwitchToRegister={() => setCurrentView('register')} />}
+        {user && currentView === 'dashboard' && <DashboardView onNavigate={handleNavigate} />}
+        {user && currentView === 'my-courses' && <MyCoursesView onBack={() => setCurrentView('dashboard')} onNavigate={handleNavigate} />}
+        {user && currentView === 'lesson-cpu' && <CpuLessonView onBack={() => setCurrentView('dashboard')} />}
+        {user && currentView === 'lesson-binary' && <BinaryLessonView onBack={() => setCurrentView('dashboard')} />}
+        {user && currentView === 'lesson-runtime' && <LessonRuntime lesson={binaryRuntimeLesson} onBack={() => setCurrentView('dashboard')} />}
+        {user && currentView === 'builder' && <BuilderView onBack={() => setCurrentView('dashboard')} />}
+        {user && currentView === 'course-detail' && <CourseDetailView courseId={selectedCourseId} onBack={() => setCurrentView('dashboard')} onNavigate={handleNavigate} />}
+        {user && currentView === 'lesson' && selectedLessonId > 0 && <PythonLessonView lessonId={selectedLessonId} onBack={() => setCurrentView('course-detail')} />}
       </AnimatePresence>
     </div>
   );

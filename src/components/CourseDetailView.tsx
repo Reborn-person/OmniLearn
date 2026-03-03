@@ -58,13 +58,14 @@ export function CourseDetailView({ courseId, onBack, onNavigate }: CourseDetailV
   };
 
   const totalLessons = lessons.length;
-  const completedLessons = Object.values(progress).filter(p => p.completed).length;
+  const completedLessons = (Object.values(progress) as Array<{ completed: boolean; score?: number }>).filter((p) => p.completed).length;
   const progressPercent = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
 
   const getLessonTypeLabel = (type: string) => {
     if (type === 'interactive') return '互动';
     if (type === 'diagram') return '图解';
     if (type === 'text') return '图文';
+    if (type === 'runtime') return 'Runtime';
     return '视频';
   };
 
@@ -72,6 +73,7 @@ export function CourseDetailView({ courseId, onBack, onNavigate }: CourseDetailV
     if (type === 'interactive') return 'bg-amber-500/20 text-amber-400';
     if (type === 'diagram') return 'bg-purple-500/20 text-purple-400';
     if (type === 'text') return 'bg-blue-500/20 text-blue-400';
+    if (type === 'runtime') return 'bg-cyan-500/20 text-cyan-400';
     return 'bg-slate-500/20 text-slate-400';
   };
 

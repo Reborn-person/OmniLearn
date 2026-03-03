@@ -55,10 +55,16 @@ authRouter.post('/register', async (req, res) => {
     const userId = createUser(email, passwordHash, name);
     
     const user = getUserById(Number(userId));
-    
-    res.status( 
-      user,
-201).json({      token: `demo-token-${userId}`
+
+    if (!user) {
+      return res.status(500).json({ error: 'Failed to create user' });
+    }
+
+    const { password_hash, ...userWithoutPassword } = user;
+
+    res.status(201).json({
+      user: userWithoutPassword,
+      token: `demo-token-${userId}`
     });
   } catch (error) {
     console.error('Register error:', error);
